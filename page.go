@@ -665,3 +665,57 @@ func buildOutline(entry Value) Outline {
 	}
 	return x
 }
+
+type OutlineWithPage struct {
+	Title    string
+	Page     int
+	Children []OutlineWithPage
+}
+
+func (r *Reader) OutlineWithPage() OutlineWithPage {
+	root := r.Trailer().Key("Root").Key("Outlines")
+	if root.Kind() != Dict {
+		return OutlineWithPage{}
+	}
+	return r.buildOutlineWithPage(root)
+}
+
+func (r *Reader) buildOutlineWithPage(entry Value) OutlineWithPage {
+	var outline OutlineWithPage
+	outline.Title = entry.Key("Title").Text()
+
+	dest := entry.Key("Dest")
+	if dest.Kind() == Array && dest.Len() > 0 {
+		pageRef := dest.Index(0)
+		outline.Page = r.PageNumFromRef(pageRef)
+	} else {
+		// Или через Action.D
+		action := entry.Key("A")
+		if action.Kind() == Dict {
+			d := action.Key("D")
+			if d.Kind() == Array && d.Len() > 0 {
+				pageRef := d.Index(0)
+				outline.Page = r.PageNumFromRef(pageRef)
+			}
+		}
+	}
+
+	for child := entry.Key("First"); child.Kind() == Dict; child = child.Key("Next") {
+		childOutline := r.buildOutlineWithPage(child)
+		outline.Children = append(outline.Children, childOutline)
+	}
+
+	return outline
+}
+
+func (r *Reader) PageNumFromRef(pageRef Value) int {
+	pageCount := int(r.Trailer().Key("Root").Key("Pages").Key("Count").Int64())
+	for i := 1; i <= pageCount; i++ {
+		p := r.Page(i)
+
+		if p.V.ptr == pageRef.ptr {
+			return i
+		}
+	}
+	return 0
+}
