@@ -5,6 +5,8 @@
 package pdf
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -750,4 +752,93 @@ func collectPages(node Value, pages *[]Page) {
 			*pages = append(*pages, Page{kid})
 		}
 	}
+}
+
+func (p Page) GetPlainText(fonts map[string]*Font) (result string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = ""
+			err = errors.New(fmt.Sprint(r))
+		}
+	}()
+
+	// Handle in case the content page is empty
+	if p.V.IsNull() || p.V.Key("Contents").Kind() == Null {
+		return "", nil
+	}
+	strm := p.V.Key("Contents")
+	var enc TextEncoding = &nopEncoder{}
+
+	if fonts == nil {
+		fonts = make(map[string]*Font)
+		for _, font := range p.Fonts() {
+			f := p.Font(font)
+			fonts[font] = &f
+		}
+	}
+
+	var textBuilder bytes.Buffer
+	showText := func(s string) {
+		textBuilder.WriteString(s)
+	}
+	showEncodedText := func(s string) {
+		for _, ch := range enc.Decode(s) {
+			_, err := textBuilder.WriteRune(ch)
+			if err != nil {
+				panic(err)
+			}
+		}
+	}
+
+	Interpret(strm, func(stk *Stack, op string) {
+		n := stk.Len()
+		args := make([]Value, n)
+		for i := n - 1; i >= 0; i-- {
+			args[i] = stk.Pop()
+		}
+
+		switch op {
+		default:
+			// Easier debug
+			// fmt.Println("<DEBUG><op>", op, "</op><args>", args, "</args>")
+			return
+		case "BT": // add a space between text objects
+			showText("\n")
+		case "T*": // move to start of next line
+			showEncodedText("\n")
+		case "Tf": // set text font and size
+			if len(args) != 2 {
+				panic("bad TL")
+			}
+			if font, ok := fonts[args[0].Name()]; ok {
+				enc = font.Encoder()
+			} else {
+				enc = &nopEncoder{}
+			}
+		case "\"": // set spacing, move to next line, and show text
+			if len(args) != 3 {
+				panic("bad \" operator")
+			}
+			fallthrough
+		case "'": // move to next line and show text
+			if len(args) != 1 {
+				panic("bad ' operator")
+			}
+			fallthrough
+		case "Tj": // show text
+			if len(args) != 1 {
+				panic("bad Tj operator")
+			}
+			showEncodedText(args[0].RawString())
+		case "TJ": // show text, allowing individual glyph positioning
+			v := args[0]
+			for i := 0; i < v.Len(); i++ {
+				x := v.Index(i)
+				if x.Kind() == String {
+					showEncodedText(x.RawString())
+				}
+			}
+		}
+	})
+	return textBuilder.String(), nil
 }
