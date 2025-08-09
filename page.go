@@ -728,3 +728,26 @@ func (r *Reader) buildOutlineWithPage(entry Value, pageMap map[objptr]int) Outli
 
 	return outline
 }
+
+func (r *Reader) Pages() []Page {
+	var pages []Page
+	root := r.Trailer().Key("Root").Key("Pages")
+	collectPages(root, &pages)
+	return pages
+}
+
+func collectPages(node Value, pages *[]Page) {
+	if node.Kind() != Dict || node.Key("Type").Name() != "Pages" {
+		return
+	}
+	kids := node.Key("Kids")
+	for i := 0; i < kids.Len(); i++ {
+		kid := kids.Index(i)
+		typ := kid.Key("Type").Name()
+		if typ == "Pages" {
+			collectPages(kid, pages)
+		} else if typ == "Page" {
+			*pages = append(*pages, Page{kid})
+		}
+	}
+}
